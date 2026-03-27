@@ -12,17 +12,20 @@ class VigilClient
     public function __construct(
         private readonly ?string $url,
         private readonly ?string $key,
+        int $timeout = 2,
+        int $connectTimeout = 1,
+        private readonly bool $debug = false,
     ) {
         $this->http = new Client([
-            'timeout' => 2,
-            'connect_timeout' => 1,
+            'timeout' => $timeout,
+            'connect_timeout' => $connectTimeout,
         ]);
     }
 
     public function send(array $payload): void
     {
         try {
-            $this->http->postAsync(
+            $this->http->post(
                 rtrim($this->url, '/').'/api/exceptions',
                 [
                     'headers' => [
@@ -33,10 +36,10 @@ class VigilClient
                     'json' => $payload,
                 ]
             );
-            // No ->wait() — fire and forget
-            // The promise resolves when PHP's curl handle completes in the background
-        } catch (Throwable) {
-            // Silently fail — never affect the host application
+        } catch (Throwable $e) {
+            if ($this->debug) {
+                error_log('[Vigil] Failed to send exception: '.$e->getMessage());
+            }
         }
     }
 }

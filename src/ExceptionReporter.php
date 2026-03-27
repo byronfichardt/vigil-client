@@ -6,6 +6,8 @@ use Throwable;
 
 class ExceptionReporter
 {
+    private const MAX_REQUEST_BODY_SIZE = 16384;
+
     public function __construct(
         private readonly VigilClient $client,
         private readonly StackTraceCollector $stackTraceCollector,
@@ -38,7 +40,7 @@ class ExceptionReporter
                 $payload['request_url'] = $request->fullUrl();
                 $payload['request_method'] = $request->method();
                 $payload['request_headers'] = $this->filterHeaders($request->headers->all());
-                $payload['request_body'] = $request->all();
+                $payload['request_body'] = $this->filterRequestBody($request->all());
                 $payload['request_query_params'] = $request->query();
             }
 
@@ -46,7 +48,6 @@ class ExceptionReporter
 
             $this->client->send($payload);
         } catch (Throwable) {
-            // Silently fail - never affect the host application
         }
     }
 
@@ -88,6 +89,30 @@ class ExceptionReporter
             fn (string $key) => ! in_array(strtolower($key), $sensitiveHeaders),
             ARRAY_FILTER_USE_KEY,
         );
+    }
+
+    private function filterRequestBody(array $body): array
+    {
+        $redactFields = config('vigil.redact_fields', []);
+
+        $filtered = array_map(function ($value, $key) use ($redactFields) {
+            if (in_array(strtolower($key), array_map('strtolower', $redactFields))) {
+                return '[REDACTED]';
+            }
+
+            return $value;
+        }, $body, array_keys($body));
+
+        $filtered = array_combine(array_keys($body), $filtered);
+
+        $encoded = json_encode($filtered);
+        $size = strlen($encoded);
+
+        if ($size > self::MAX_REQUEST_BODY_SIZE) {
+            return ['_truncated' => true, '_size' => $size];
+        }
+
+        return $filtered;
     }
 
     private function collectUserInfo(): ?array

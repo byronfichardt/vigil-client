@@ -16,7 +16,6 @@ class StackTraceCollector
             $frames = [];
             $trace = $e->getTrace();
 
-            // Add the exception origin as the first frame
             $frames[] = $this->buildFrame([
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
@@ -38,13 +37,14 @@ class StackTraceCollector
     {
         $file = $entry['file'] ?? null;
         $line = $entry['line'] ?? null;
+        $collectSnippets = config('vigil.code_snippets', true);
 
         return [
             'file' => $file,
             'line' => $line,
             'class' => $entry['class'] ?? null,
             'function' => $entry['function'] ?? null,
-            'code_snippet' => $file && $line ? $this->getCodeSnippet($file, $line) : null,
+            'code_snippet' => $collectSnippets && $file && $line ? $this->getCodeSnippet($file, $line) : null,
         ];
     }
 

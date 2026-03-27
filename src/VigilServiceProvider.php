@@ -16,6 +16,9 @@ class VigilServiceProvider extends ServiceProvider
             return new VigilClient(
                 url: config('vigil.url'),
                 key: config('vigil.key'),
+                timeout: (int) config('vigil.timeout', 2),
+                connectTimeout: (int) config('vigil.connect_timeout', 1),
+                debug: (bool) config('vigil.debug', false),
             );
         });
 
@@ -46,7 +49,6 @@ class VigilServiceProvider extends ServiceProvider
                 })
                 ->stop(false);
         } catch (Throwable) {
-            // Silently fail - never interfere with the host application
         }
     }
 }
