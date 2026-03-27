@@ -14,8 +14,8 @@ class VigilClient
         private readonly ?string $key,
     ) {
         $this->http = new Client([
-            'timeout' => 5,
-            'connect_timeout' => 5,
+            'timeout' => 2,
+            'connect_timeout' => 1,
         ]);
     }
 
@@ -32,9 +32,11 @@ class VigilClient
                     ],
                     'json' => $payload,
                 ]
-            )->wait();
+            );
+            // No ->wait() — fire and forget
+            // The promise resolves when PHP's curl handle completes in the background
         } catch (Throwable) {
-            // Silently fail - never affect the host application
+            // Silently fail — never affect the host application
         }
     }
 }
