@@ -28,4 +28,11 @@ return [
         Illuminate\Auth\AuthenticationException::class,
         Illuminate\Session\TokenMismatchException::class,
     ],
+
+    'logs' => [
+        'enabled' => env('VIGIL_LOGS_ENABLED', true),
+        'levels' => ['warning', 'error', 'critical', 'alert', 'emergency'],
+        'channels' => ['*'],
+        'buffer_limit' => 100,
+    ],
 ];
