@@ -28,7 +28,7 @@ class ExceptionReporter
                 'stack_trace' => $this->stackTraceCollector->collect($e),
                 'environment' => config('vigil.environment'),
                 'hostname' => gethostname(),
-                'app_version' => config('app.version'),
+                'app_version' => config('vigil.app_version') ?? config('app.version'),
                 'php_version' => PHP_VERSION,
                 'laravel_version' => app()->version(),
                 'occurred_at' => now()->toIso8601String(),

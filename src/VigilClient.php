@@ -67,6 +67,23 @@ class VigilClient
         }
     }
 
+    public function heartbeat(int $intervalMinutes): void
+    {
+        try {
+            $this->http->post(
+                rtrim($this->url, '/').'/api/heartbeat',
+                [
+                    'headers' => $this->headers(),
+                    'json' => ['interval_minutes' => $intervalMinutes],
+                ]
+            );
+        } catch (Throwable $e) {
+            if ($this->debug) {
+                error_log('[Vigil] Failed to send heartbeat: '.$e->getMessage());
+            }
+        }
+    }
+
     private function headers(): array
     {
         return [
