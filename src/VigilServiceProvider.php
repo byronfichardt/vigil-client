@@ -64,8 +64,7 @@ class VigilServiceProvider extends ServiceProvider
             $this->app->make(ExceptionHandler::class)
                 ->reportable(function (Throwable $e) {
                     $this->app->make(ExceptionReporter::class)->report($e);
-                })
-                ->stop(false);
+                });
         } catch (Throwable) {
         }
     }
