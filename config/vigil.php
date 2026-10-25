@@ -8,6 +8,7 @@ return [
     'debug' => env('VIGIL_DEBUG', false),
     'timeout' => env('VIGIL_TIMEOUT', 2),
     'connect_timeout' => env('VIGIL_CONNECT_TIMEOUT', 1),
+    'app_version' => env('VIGIL_APP_VERSION', env('KAMAL_VERSION')),
     'code_snippets' => true,
 
     'redact_fields' => [
@@ -27,6 +28,11 @@ return [
         Symfony\Component\HttpKernel\Exception\NotFoundHttpException::class,
         Illuminate\Auth\AuthenticationException::class,
         Illuminate\Session\TokenMismatchException::class,
+    ],
+
+    'heartbeat' => [
+        'enabled' => env('VIGIL_HEARTBEAT_ENABLED', true),
+        'interval_minutes' => 5,
     ],
 
     'logs' => [

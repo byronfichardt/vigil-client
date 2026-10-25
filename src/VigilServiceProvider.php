@@ -2,6 +2,7 @@
 
 namespace Vigil\Client;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Queue\Events\JobFailed;
@@ -54,6 +55,7 @@ class VigilServiceProvider extends ServiceProvider
 
         $this->bootExceptionReporting();
         $this->bootLogForwarding();
+        $this->bootHeartbeat();
     }
 
     private function bootExceptionReporting(): void
@@ -94,5 +96,20 @@ class VigilServiceProvider extends ServiceProvider
             }
         } catch (Throwable) {
         }
+    }
+
+    private function bootHeartbeat(): void
+    {
+        if (! config('vigil.heartbeat.enabled', true)) {
+            return;
+        }
+
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
+            $minutes = (int) config('vigil.heartbeat.interval_minutes', 5);
+
+            $schedule->call(fn () => $this->app->make(VigilClient::class)->heartbeat($minutes))
+                ->name('vigil:heartbeat')
+                ->cron("*/{$minutes} * * * *");
+        });
     }
 }
