@@ -14,6 +14,14 @@ class VigilLogFlusher
 
     public function terminate($request, $response): void
     {
+        self::flush();
+    }
+
+    /**
+     * Sends buffered logs and AI spend; queue workers pass $job so spend goes out at most every half minute.
+     */
+    public static function flush(bool $job = false): void
+    {
         try {
             if (config('vigil.logs.enabled', true)) {
                 app(VigilLogHandler::class)->flush();
@@ -22,7 +30,7 @@ class VigilLogFlusher
         }
 
         try {
-            app(AiSpendRecorder::class)->flush();
+            $job ? app(AiSpendRecorder::class)->flushIfDue() : app(AiSpendRecorder::class)->flush();
         } catch (Throwable) {
         }
     }

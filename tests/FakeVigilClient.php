@@ -29,9 +29,15 @@ class FakeVigilClient extends VigilClient
         $this->logBatches[] = $logs;
     }
 
-    public function sendAiSpend(array $spend): void
+    public bool $acceptSpend = true;
+
+    public function sendAiSpend(array $spend): bool
     {
-        $this->spendBatches[] = $spend;
+        if ($this->acceptSpend) {
+            $this->spendBatches[] = $spend;
+        }
+
+        return $this->acceptSpend;
     }
 
     public function heartbeat(int $intervalMinutes): void

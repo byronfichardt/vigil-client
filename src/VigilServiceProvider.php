@@ -5,8 +5,10 @@ namespace Vigil\Client;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
+use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobTimedOut;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 use Throwable;
@@ -105,19 +107,15 @@ class VigilServiceProvider extends ServiceProvider
     private function bootFlushing(): void
     {
         try {
-            $flush = function () {
-                if (config('vigil.logs.enabled', true)) {
-                    $this->app->make(VigilLogHandler::class)->flush();
-                }
-
-                $this->app->make(AiSpendRecorder::class)->flush();
-            };
-
             if ($this->app->runningInConsole()) {
-                register_shutdown_function($flush);
+                register_shutdown_function(fn () => VigilLogFlusher::flush());
 
-                $this->app->make('events')->listen(JobProcessed::class, $flush);
-                $this->app->make('events')->listen(JobFailed::class, $flush);
+                $events = $this->app->make('events');
+                $events->listen([JobProcessed::class, JobFailed::class, JobExceptionOccurred::class], fn () => VigilLogFlusher::flush(job: true));
+
+                if (class_exists(JobTimedOut::class)) {
+                    $events->listen(JobTimedOut::class, fn () => VigilLogFlusher::flush());
+                }
             } else {
                 $this->app->make(HttpKernel::class)->pushMiddleware(VigilLogFlusher::class);
             }

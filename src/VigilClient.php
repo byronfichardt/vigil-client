@@ -3,6 +3,9 @@
 namespace Vigil\Client;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\BadResponseException;
+use GuzzleHttp\HandlerStack;
 use Throwable;
 
 class VigilClient
@@ -15,10 +18,12 @@ class VigilClient
         int $timeout = 2,
         int $connectTimeout = 1,
         private readonly bool $debug = false,
+        ?HandlerStack $handler = null,
     ) {
         $this->http = new Client([
             'timeout' => $timeout,
             'connect_timeout' => $connectTimeout,
+            'handler' => $handler ?? HandlerStack::create(),
         ]);
     }
 
@@ -84,10 +89,14 @@ class VigilClient
         }
     }
 
+    /** cURL could not resolve or reach Vigil, so nothing was sent. */
+    private const NOT_SENT_ERRNOS = [6, 7];
+
     /**
      * @param  list<array{provider: string, cost_usd: float}>  $spend
+     * @return bool false only when Vigil certainly did not record it (rate limited or unreachable), so it can be sent again
      */
-    public function sendAiSpend(array $spend): void
+    public function sendAiSpend(array $spend): bool
     {
         try {
             $this->http->post(
@@ -97,11 +106,27 @@ class VigilClient
                     'json' => ['spend' => $spend],
                 ]
             );
+
+            return true;
         } catch (Throwable $e) {
             if ($this->debug) {
                 error_log('[Vigil] Failed to send AI spend: '.$e->getMessage());
             }
+
+            return ! match (true) {
+                $e instanceof BadResponseException => $e->getResponse()->getStatusCode() === 429,
+                $e instanceof ConnectException => $this->neverSent($e),
+                default => false,
+            };
         }
+    }
+
+    /**
+     * Guzzle 8 throws ConnectException only when no connection was made; Guzzle 7 also throws it for timeouts after sending.
+     */
+    private function neverSent(ConnectException $e): bool
+    {
+        return ! method_exists($e, 'getHandlerContext') || in_array($e->getHandlerContext()['errno'] ?? null, self::NOT_SENT_ERRNOS, true);
     }
 
     private function headers(): array
