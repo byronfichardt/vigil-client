@@ -157,6 +157,19 @@ For queue workers and CLI commands:
 
 If the buffer fills up before the request ends, it flushes immediately to keep memory bounded.
 
+## AI spend
+
+Vigil can't fetch spend from every provider (Gemini and search APIs have no spend API), so the app reports it. Record the cost of each call; costs are added up per provider and sent to Vigil once the request, job or command ends.
+
+```php
+use Vigil\Client\Facades\AiSpend;
+
+AiSpend::record('gemini', $costUsd);
+```
+
+Accepted providers: `gemini`, `serper`, `serpapi`.
+
+
 ## Security
 
 Vigil takes care to avoid leaking sensitive data:
@@ -222,15 +235,3 @@ If exceptions or logs aren't showing up in your Vigil dashboard:
 ## License
 
 MIT
-
-## AI spend
-
-Vigil can't fetch spend from every provider (Gemini and search APIs have no spend API), so the app reports it. Record the cost of each call; costs are added up per provider and sent to Vigil once the request, job or command ends.
-
-```php
-use Vigil\Client\Facades\AiSpend;
-
-AiSpend::record('gemini', $costUsd);
-```
-
-Accepted providers: `gemini`, `serper`, `serpapi`.
