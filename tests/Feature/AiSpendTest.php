@@ -156,8 +156,8 @@ it('counts on the database store, which does not create keys on increment', func
 
 it('adds again when another process created the key first', function () {
     $cache = Mockery::mock(Illuminate\Contracts\Cache\Repository::class);
-    $cache->shouldReceive('increment')->once()->ordered()->andReturn(false);
-    $cache->shouldReceive('add')->once()->ordered()->andReturn(false);
+    $cache->shouldReceive('increment')->once()->ordered()->with('vigil:ai-spend:gemini', 500_000)->andReturn(false);
+    $cache->shouldReceive('add')->once()->ordered()->with('vigil:ai-spend:gemini', 500_000, Mockery::on(fn ($ttl) => $ttl >= 60 * 60 * 24 * 365))->andReturn(false);
     $cache->shouldReceive('increment')->once()->ordered()->with('vigil:ai-spend:gemini', 500_000)->andReturn(800_000);
     $caches = Mockery::mock(Illuminate\Contracts\Cache\Factory::class);
     $caches->shouldReceive('store')->andReturn($cache);
@@ -175,6 +175,8 @@ it('only asks for a resend when Vigil certainly did not record the spend', funct
     'rejected' => [fn () => new GuzzleHttp\Psr7\Response(422), true],
     'Vigil not upgraded yet' => [fn () => new GuzzleHttp\Psr7\Response(404), false],
     'wrong key' => [fn () => new GuzzleHttp\Psr7\Response(401), false],
+    'forbidden' => [fn () => new GuzzleHttp\Psr7\Response(403), false],
+    'redirected' => [fn () => new GuzzleHttp\Psr7\Response(301, ['Location' => 'https://vigil.test/api/ai-spend']), false],
     'server error' => [fn () => new GuzzleHttp\Psr7\Response(500), false],
     'unreachable' => [fn () => new GuzzleHttp\Exception\ConnectException('refused', new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test')), false],
     'timed out after sending' => [fn () => new GuzzleHttp\Exception\NetworkTimeoutException('timeout', new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test')), true],
@@ -214,4 +216,29 @@ it('runs one send at a time', function () {
     $lock->release();
     AiSpend::send();
     expect($this->vigil->spendBatches)->toHaveCount(1);
+});
+
+it('keeps spend when Guzzle 7 fails the certificate check before sending', function () {
+    $request = new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test');
+    $failure = new class('SSL certificate problem', $request) extends GuzzleHttp\Exception\RequestException
+    {
+        public function getHandlerContext(): array
+        {
+            return ['errno' => 60, 'pretransfer_time' => 0.0];
+        }
+
+        public function hasResponse(): bool
+        {
+            return false;
+        }
+    };
+    $client = new VigilClient('https://vigil.test', 'key', handler: GuzzleHttp\HandlerStack::create(new GuzzleHttp\Handler\MockHandler([$failure])));
+
+    expect($client->sendAiSpend([['provider' => 'gemini', 'cost_usd' => 1.0]]))->toBeFalse();
+});
+
+it('ignores a cost too large to be real', function () {
+    AiSpend::record('gemini', 1e9);
+
+    expect(AiSpend::pending())->toBeEmpty();
 });

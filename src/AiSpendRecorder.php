@@ -31,7 +31,10 @@ class AiSpendRecorder
     private const MICROS = 1_000_000;
 
     /** Unsent spend is kept this long in stores that need an expiry for an atomic add. */
-    private const KEEP_SECONDS = 60 * 60 * 24 * 365;
+    private const KEEP_SECONDS = 60 * 60 * 24 * 365 * 10;
+
+    /** A single cost above this is a unit mistake (tokens or cents passed as dollars) and is ignored. */
+    public const MAX_RECORD_USD = 100_000;
 
     private ?Repository $cache = null;
 
@@ -45,7 +48,7 @@ class AiSpendRecorder
     public function record(string $provider, float $costUsd): void
     {
         $provider = strtolower($provider);
-        $micros = is_finite($costUsd) ? (int) round($costUsd * self::MICROS) : 0;
+        $micros = is_finite($costUsd) && $costUsd <= self::MAX_RECORD_USD ? (int) round($costUsd * self::MICROS) : 0;
 
         if (! $this->enabled || $micros <= 0 || ! in_array($provider, self::PROVIDERS, true)) {
             return;
@@ -142,7 +145,7 @@ class AiSpendRecorder
         $rows = [];
 
         foreach (self::PROVIDERS as $provider) {
-            for ($left = (int) $this->cache()->get(self::key($provider), 0); $left > 0; $left -= self::MAX_ROW_USD * self::MICROS) {
+            for ($left = (int) $this->cache()->get(self::key($provider), 0); $left > 0 && count($rows) < self::MAX_ROWS * self::MAX_CALLS_PER_SEND; $left -= self::MAX_ROW_USD * self::MICROS) {
                 $rows[] = ['provider' => $provider, 'micros' => min($left, self::MAX_ROW_USD * self::MICROS)];
             }
         }
