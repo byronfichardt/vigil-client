@@ -2,6 +2,7 @@
 
 namespace Vigil\Client\Tests;
 
+use Closure;
 use Vigil\Client\VigilClient;
 
 class FakeVigilClient extends VigilClient
@@ -31,8 +32,19 @@ class FakeVigilClient extends VigilClient
 
     public bool $acceptSpend = true;
 
+    public int $sendAttempts = 0;
+
+    public ?Closure $duringSend = null;
+
     public function sendAiSpend(array $spend): bool
     {
+        $this->sendAttempts++;
+
+        if ($this->duringSend) {
+            ($this->duringSend)();
+            $this->duringSend = null;
+        }
+
         if ($this->acceptSpend) {
             $this->spendBatches[] = $spend;
         }

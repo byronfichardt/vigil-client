@@ -2,121 +2,98 @@
 
 namespace Vigil\Client;
 
+use Illuminate\Contracts\Cache\Repository;
+use Throwable;
+
 /**
- * Adds up AI and API costs per provider and sends them to Vigil when a request or command ends,
- * and at most every half minute from a queue worker. Spend Vigil turned away is kept for the next send,
- * which only helps long-running processes: a PHP-FPM request loses it when the request ends.
+ * Adds up AI and API costs per provider in the app's cache, and sends the totals to Vigil once a minute
+ * from the scheduler. A counter only goes down by what Vigil accepted, so nothing is lost between sends,
+ * when a process is killed, or while Vigil is unreachable.
  */
 class AiSpendRecorder
 {
-    /** Providers Vigil accepts; anything else would make it reject the whole batch. */
+    /** Providers Vigil accepts; anything else would make it reject the whole report. */
     public const PROVIDERS = ['gemini', 'serper', 'serpapi'];
 
-    public const FLUSH_AFTER_RECORDS = 100;
-
-    /** Long-running processes send early once a provider's total reaches this. */
-    public const FLUSH_AT_USD = 100.0;
-
     /** Vigil's limit per row; larger totals are split across rows. */
-    public const MAX_ROW_USD = 1000.0;
+    public const MAX_ROW_USD = 1000;
 
     public const MAX_ROWS = 20;
 
-    /** Calls per flush; anything beyond waits for the next flush instead of blocking the request. */
-    public const MAX_CALLS_PER_FLUSH = 3;
+    /** Calls per send; anything beyond waits a minute for the next send. */
+    public const MAX_CALLS_PER_SEND = 3;
 
-    public const JOB_FLUSH_SECONDS = 30;
-
-    /** @var array<string, float> */
-    private array $costs = [];
-
-    private int $records = 0;
-
-    private ?int $flushedAtMs = null;
+    /** Costs are counted in millionths of a dollar so the cache can add them atomically. */
+    private const MICROS = 1_000_000;
 
     public function __construct(
         private readonly VigilClient $client,
+        private readonly Repository $cache,
         private readonly bool $enabled,
     ) {}
 
     public function record(string $provider, float $costUsd): void
     {
         $provider = strtolower($provider);
+        $micros = is_finite($costUsd) ? (int) round($costUsd * self::MICROS) : 0;
 
-        if (! $this->enabled || ! is_finite($costUsd) || $costUsd <= 0 || ! in_array($provider, self::PROVIDERS, true)) {
+        if (! $this->enabled || $micros <= 0 || ! in_array($provider, self::PROVIDERS, true)) {
             return;
         }
 
-        $this->costs[$provider] = ($this->costs[$provider] ?? 0) + $costUsd;
-
-        if (++$this->records >= self::FLUSH_AFTER_RECORDS || $this->costs[$provider] >= self::FLUSH_AT_USD) {
-            $this->flushIfDue();
+        try {
+            $this->cache->add(self::key($provider), 0);
+            $this->cache->increment(self::key($provider), $micros);
+        } catch (Throwable) {
         }
     }
 
-    /**
-     * Sends at most every JOB_FLUSH_SECONDS, so a busy worker or a rate-limited retry stays under Vigil's rate limit.
-     */
-    public function flushIfDue(): void
+    public function send(): void
     {
-        if ($this->flushedAtMs === null || now()->getTimestampMs() - $this->flushedAtMs >= self::JOB_FLUSH_SECONDS * 1000) {
-            $this->flush();
-        }
-    }
+        $rows = $this->rows();
 
-    public function flush(): void
-    {
-        $this->flushedAtMs = now()->getTimestampMs();
+        foreach (array_slice(array_chunk($rows, self::MAX_ROWS), 0, self::MAX_CALLS_PER_SEND) as $chunk) {
+            $report = array_map(fn (array $row) => ['provider' => $row['provider'], 'cost_usd' => $row['micros'] / self::MICROS], $chunk);
 
-        if ($this->costs === []) {
-            return;
-        }
-
-        $chunks = array_chunk($this->rows($this->costs), self::MAX_ROWS);
-        $this->costs = [];
-        $this->records = 0;
-
-        foreach ($chunks as $i => $rows) {
-            if ($i >= self::MAX_CALLS_PER_FLUSH || ! $this->client->sendAiSpend($rows)) {
-                $this->keep(array_merge(...array_slice($chunks, $i)));
-
+            if (! $this->client->sendAiSpend($report)) {
                 return;
+            }
+
+            foreach ($chunk as $row) {
+                $this->cache->decrement(self::key($row['provider']), $row['micros']);
             }
         }
     }
 
     /**
-     * @param  list<array{provider: string, cost_usd: float}>  $rows
-     */
-    private function keep(array $rows): void
-    {
-        foreach ($rows as $row) {
-            $this->costs[$row['provider']] = ($this->costs[$row['provider']] ?? 0) + $row['cost_usd'];
-        }
-    }
-
-    /**
-     * @return array<string, float>
+     * @return array<string, float> cost waiting to be sent, per provider
      */
     public function pending(): array
     {
-        return $this->costs;
+        return array_filter(array_combine(
+            self::PROVIDERS,
+            array_map(fn (string $provider) => (int) $this->cache->get(self::key($provider), 0) / (float) self::MICROS, self::PROVIDERS),
+        ));
     }
 
     /**
-     * @param  array<string, float>  $costs
-     * @return list<array{provider: string, cost_usd: float}>
+     * @return list<array{provider: string, micros: int}>
      */
-    private function rows(array $costs): array
+    private function rows(): array
     {
         $rows = [];
 
-        foreach ($costs as $provider => $cost) {
-            for ($left = $cost; $left > 0; $left -= self::MAX_ROW_USD) {
-                $rows[] = ['provider' => $provider, 'cost_usd' => round(min($left, self::MAX_ROW_USD), 6)];
+        foreach (self::PROVIDERS as $provider) {
+            for ($left = (int) $this->cache->get(self::key($provider), 0); $left > 0; $left -= self::MAX_ROW_USD * self::MICROS) {
+                $rows[] = ['provider' => $provider, 'micros' => min($left, self::MAX_ROW_USD * self::MICROS)];
             }
         }
 
         return $rows;
+    }
+
+    private static function key(string $provider): string
+    {
+        return "vigil:ai-spend:{$provider}";
     }
 }

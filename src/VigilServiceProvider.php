@@ -5,12 +5,8 @@ namespace Vigil\Client;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
-use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
-use Illuminate\Queue\Events\JobTimedOut;
-use Illuminate\Queue\Events\Looping;
-use Illuminate\Queue\Events\WorkerStopping;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 use Throwable;
@@ -42,6 +38,7 @@ class VigilServiceProvider extends ServiceProvider
 
         $this->app->singleton(AiSpendRecorder::class, fn ($app) => new AiSpendRecorder(
             client: $app->make(VigilClient::class),
+            cache: $app->make('cache')->store(config('vigil.ai_spend.cache_store')),
             enabled: self::configured(),
         ));
 
@@ -64,8 +61,8 @@ class VigilServiceProvider extends ServiceProvider
 
         $this->bootExceptionReporting();
         $this->bootLogForwarding();
-        $this->bootFlushing();
         $this->bootHeartbeat();
+        $this->bootAiSpend();
     }
 
     private static function configured(): bool
@@ -99,26 +96,12 @@ class VigilServiceProvider extends ServiceProvider
                 } catch (Throwable) {
                 }
             });
-        } catch (Throwable) {
-        }
-    }
 
-    /**
-     * Buffered logs and AI spend are sent when a request, job or console command ends.
-     */
-    private function bootFlushing(): void
-    {
-        try {
             if ($this->app->runningInConsole()) {
-                register_shutdown_function(fn () => VigilLogFlusher::flush());
+                register_shutdown_function(fn () => $handler->flush());
 
-                $events = $this->app->make('events');
-                $events->listen([JobProcessed::class, JobFailed::class, JobExceptionOccurred::class, Looping::class], fn () => VigilLogFlusher::flush(job: true));
-                $events->listen(WorkerStopping::class, fn () => VigilLogFlusher::flush());
-
-                if (class_exists(JobTimedOut::class)) {
-                    $events->listen(JobTimedOut::class, fn () => VigilLogFlusher::flush());
-                }
+                $this->app->make('events')->listen(JobProcessed::class, fn () => $handler->flush());
+                $this->app->make('events')->listen(JobFailed::class, fn () => $handler->flush());
             } else {
                 $this->app->make(HttpKernel::class)->pushMiddleware(VigilLogFlusher::class);
             }
@@ -138,6 +121,16 @@ class VigilServiceProvider extends ServiceProvider
             $schedule->call(fn () => $this->app->make(VigilClient::class)->heartbeat($minutes))
                 ->name('vigil:heartbeat')
                 ->cron("*/{$minutes} * * * *");
+        });
+    }
+
+    private function bootAiSpend(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
+            $schedule->call(fn () => $this->app->make(AiSpendRecorder::class)->send())
+                ->name('vigil:ai-spend')
+                ->everyMinute()
+                ->withoutOverlapping(5);
         });
     }
 }

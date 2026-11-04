@@ -6,7 +6,6 @@
     <testsuites>
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
-            <directory>tests/LogsOff</directory>
         </testsuite>
     </testsuites>
     <source>

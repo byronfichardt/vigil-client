@@ -159,7 +159,7 @@ If the buffer fills up before the request ends, it flushes immediately to keep m
 
 ## AI spend
 
-Vigil can't fetch spend from every provider (Gemini and search APIs have no spend API), so the app reports it. Record the cost of each call; costs are added up per provider and sent to Vigil once the request, job or command ends.
+Vigil can't fetch spend from every provider (Gemini and search APIs have no spend API), so the app reports it. Record the cost of each call:
 
 ```php
 use Vigil\Client\Facades\AiSpend;
@@ -167,12 +167,9 @@ use Vigil\Client\Facades\AiSpend;
 AiSpend::record('gemini', $costUsd);
 ```
 
-Accepted providers: `gemini`, `serper`, `serpapi`; anything else is dropped so it can't make Vigil reject the rest.
+Costs are added up per provider in the app's cache and sent to Vigil once a minute by the scheduler, so the app must run `schedule:run` (as it already does for the heartbeat). Use a cache store every web and queue process shares (`VIGIL_AI_SPEND_CACHE_STORE`, default the app's cache); the `array` store loses them.
 
-Needs a Vigil server with the `/api/ai-spend` endpoint. Until then sends get a 404 and the spend is kept for the next send, so deploy Vigil first.
-
-Queue workers send at most every 30 seconds, including while idle. Spend Vigil turns away (rate limit, not reachable, server error) is kept and sent next time; in a PHP-FPM request that only lasts until the request ends.
-
+Accepted providers: `gemini`, `serper`, `serpapi`; anything else is dropped so it can't make Vigil reject the rest. Spend Vigil turns away (rate limited, unreachable, a server error, or a Vigil without the `/api/ai-spend` endpoint yet) stays in the cache and goes out with the next send.
 
 ## Security
 
