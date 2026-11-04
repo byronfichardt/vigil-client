@@ -20,6 +20,9 @@ abstract class TestCase extends Orchestra
         $app['config']->set('vigil.url', 'https://vigil.test');
         $app['config']->set('vigil.key', 'test-key');
         $app['config']->set('vigil.enabled', true);
+        $app['config']->set('database.default', 'testing');
+        $app['config']->set('database.connections.testing', ['driver' => 'sqlite', 'database' => ':memory:']);
+        $app['config']->set('cache.stores.database', ['driver' => 'database', 'connection' => 'testing', 'table' => 'cache', 'lock_table' => 'cache_locks']);
         $app['config']->set('logging.default', 'stack');
         $app['config']->set('logging.channels.stack', ['driver' => 'stack', 'channels' => ['null']]);
 

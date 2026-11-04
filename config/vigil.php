@@ -35,6 +35,11 @@ return [
         'interval_minutes' => 5,
     ],
 
+    'ai_spend' => [
+        // Costs are added up here between sends, so use a store every web and queue process shares.
+        'cache_store' => env('VIGIL_AI_SPEND_CACHE_STORE'),
+    ],
+
     'logs' => [
         'enabled' => env('VIGIL_LOGS_ENABLED', true),
         'levels' => ['warning', 'error', 'critical', 'alert', 'emergency'],

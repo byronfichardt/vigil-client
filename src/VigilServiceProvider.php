@@ -36,6 +36,13 @@ class VigilServiceProvider extends ServiceProvider
             );
         });
 
+        $this->app->singleton(AiSpendRecorder::class, fn ($app) => new AiSpendRecorder(
+            client: $app->make(VigilClient::class),
+            caches: $app->make('cache'),
+            store: config('vigil.ai_spend.cache_store'),
+            enabled: self::configured(),
+        ));
+
         $this->app->singleton(VigilLogHandler::class, function ($app) {
             return new VigilLogHandler(
                 client: $app->make(VigilClient::class),
@@ -49,13 +56,19 @@ class VigilServiceProvider extends ServiceProvider
             __DIR__.'/../config/vigil.php' => config_path('vigil.php'),
         ], 'vigil-config');
 
-        if (! config('vigil.enabled') || ! config('vigil.url') || ! config('vigil.key')) {
+        if (! self::configured()) {
             return;
         }
 
         $this->bootExceptionReporting();
         $this->bootLogForwarding();
         $this->bootHeartbeat();
+        $this->bootAiSpend();
+    }
+
+    private static function configured(): bool
+    {
+        return config('vigil.enabled') && config('vigil.url') && config('vigil.key');
     }
 
     private function bootExceptionReporting(): void
@@ -109,6 +122,16 @@ class VigilServiceProvider extends ServiceProvider
             $schedule->call(fn () => $this->app->make(VigilClient::class)->heartbeat($minutes))
                 ->name('vigil:heartbeat')
                 ->cron("*/{$minutes} * * * *");
+        });
+    }
+
+    private function bootAiSpend(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
+            $schedule->call(fn () => $this->app->make(AiSpendRecorder::class)->send())
+                ->name('vigil:ai-spend')
+                ->everyMinute()
+                ->withoutOverlapping(5);
         });
     }
 }
