@@ -84,6 +84,26 @@ class VigilClient
         }
     }
 
+    /**
+     * @param  list<array{provider: string, cost_usd: float}>  $spend
+     */
+    public function sendAiSpend(array $spend): void
+    {
+        try {
+            $this->http->post(
+                rtrim($this->url, '/').'/api/ai-spend',
+                [
+                    'headers' => $this->headers(),
+                    'json' => ['spend' => $spend],
+                ]
+            );
+        } catch (Throwable $e) {
+            if ($this->debug) {
+                error_log('[Vigil] Failed to send AI spend: '.$e->getMessage());
+            }
+        }
+    }
+
     private function headers(): array
     {
         return [

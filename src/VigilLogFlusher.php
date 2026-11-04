@@ -15,7 +15,14 @@ class VigilLogFlusher
     public function terminate($request, $response): void
     {
         try {
-            app(VigilLogHandler::class)->flush();
+            if (config('vigil.logs.enabled', true)) {
+                app(VigilLogHandler::class)->flush();
+            }
+        } catch (Throwable) {
+        }
+
+        try {
+            app(AiSpendRecorder::class)->flush();
         } catch (Throwable) {
         }
     }

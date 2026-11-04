@@ -12,6 +12,8 @@ class FakeVigilClient extends VigilClient
 
     public array $heartbeats = [];
 
+    public array $spendBatches = [];
+
     public function __construct()
     {
         parent::__construct(url: 'https://vigil.test', key: 'test-key');
@@ -25,6 +27,11 @@ class FakeVigilClient extends VigilClient
     public function sendLogs(array $logs): void
     {
         $this->logBatches[] = $logs;
+    }
+
+    public function sendAiSpend(array $spend): void
+    {
+        $this->spendBatches[] = $spend;
     }
 
     public function heartbeat(int $intervalMinutes): void

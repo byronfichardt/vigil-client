@@ -36,6 +36,11 @@ class VigilServiceProvider extends ServiceProvider
             );
         });
 
+        $this->app->singleton(AiSpendRecorder::class, fn ($app) => new AiSpendRecorder(
+            client: $app->make(VigilClient::class),
+            enabled: (bool) config('vigil.enabled') && config('vigil.url') && config('vigil.key'),
+        ));
+
         $this->app->singleton(VigilLogHandler::class, function ($app) {
             return new VigilLogHandler(
                 client: $app->make(VigilClient::class),
@@ -55,6 +60,7 @@ class VigilServiceProvider extends ServiceProvider
 
         $this->bootExceptionReporting();
         $this->bootLogForwarding();
+        $this->bootFlushing();
         $this->bootHeartbeat();
     }
 
@@ -84,12 +90,29 @@ class VigilServiceProvider extends ServiceProvider
                 } catch (Throwable) {
                 }
             });
+        } catch (Throwable) {
+        }
+    }
+
+    /**
+     * Buffered logs and AI spend are sent when a request, job or console command ends.
+     */
+    private function bootFlushing(): void
+    {
+        try {
+            $flush = function () {
+                if (config('vigil.logs.enabled', true)) {
+                    $this->app->make(VigilLogHandler::class)->flush();
+                }
+
+                $this->app->make(AiSpendRecorder::class)->flush();
+            };
 
             if ($this->app->runningInConsole()) {
-                register_shutdown_function(fn () => $handler->flush());
+                register_shutdown_function($flush);
 
-                $this->app->make('events')->listen(JobProcessed::class, fn () => $handler->flush());
-                $this->app->make('events')->listen(JobFailed::class, fn () => $handler->flush());
+                $this->app->make('events')->listen(JobProcessed::class, $flush);
+                $this->app->make('events')->listen(JobFailed::class, $flush);
             } else {
                 $this->app->make(HttpKernel::class)->pushMiddleware(VigilLogFlusher::class);
             }
