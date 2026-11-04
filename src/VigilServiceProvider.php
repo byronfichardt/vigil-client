@@ -38,7 +38,7 @@ class VigilServiceProvider extends ServiceProvider
 
         $this->app->singleton(AiSpendRecorder::class, fn ($app) => new AiSpendRecorder(
             client: $app->make(VigilClient::class),
-            enabled: (bool) config('vigil.enabled') && config('vigil.url') && config('vigil.key'),
+            enabled: self::configured(),
         ));
 
         $this->app->singleton(VigilLogHandler::class, function ($app) {
@@ -54,7 +54,7 @@ class VigilServiceProvider extends ServiceProvider
             __DIR__.'/../config/vigil.php' => config_path('vigil.php'),
         ], 'vigil-config');
 
-        if (! config('vigil.enabled') || ! config('vigil.url') || ! config('vigil.key')) {
+        if (! self::configured()) {
             return;
         }
 
@@ -62,6 +62,11 @@ class VigilServiceProvider extends ServiceProvider
         $this->bootLogForwarding();
         $this->bootFlushing();
         $this->bootHeartbeat();
+    }
+
+    private static function configured(): bool
+    {
+        return config('vigil.enabled') && config('vigil.url') && config('vigil.key');
     }
 
     private function bootExceptionReporting(): void

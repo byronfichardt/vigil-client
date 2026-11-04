@@ -9,8 +9,18 @@ use Throwable;
  */
 class AiSpendRecorder
 {
+    /** Providers Vigil accepts; anything else would make it reject the whole batch. */
+    public const PROVIDERS = ['gemini', 'serper', 'serpapi'];
+
+    /** Long-running processes send early, well below Vigil's $1,000 limit per provider per call. */
+    public const FLUSH_AFTER_RECORDS = 100;
+
+    public const FLUSH_AT_USD = 100.0;
+
     /** @var array<string, float> */
     private array $costs = [];
+
+    private int $records = 0;
 
     public function __construct(
         private readonly VigilClient $client,
@@ -19,11 +29,17 @@ class AiSpendRecorder
 
     public function record(string $provider, float $costUsd): void
     {
-        if (! $this->enabled || $costUsd <= 0) {
+        $provider = strtolower($provider);
+
+        if (! $this->enabled || ! is_finite($costUsd) || $costUsd <= 0 || ! in_array($provider, self::PROVIDERS, true)) {
             return;
         }
 
         $this->costs[$provider] = ($this->costs[$provider] ?? 0) + $costUsd;
+
+        if (++$this->records >= self::FLUSH_AFTER_RECORDS || $this->costs[$provider] >= self::FLUSH_AT_USD) {
+            $this->flush();
+        }
     }
 
     public function flush(): void
@@ -34,6 +50,7 @@ class AiSpendRecorder
 
         $spend = array_map(fn (string $provider, float $cost) => ['provider' => $provider, 'cost_usd' => round($cost, 6)], array_keys($this->costs), $this->costs);
         $this->costs = [];
+        $this->records = 0;
 
         try {
             $this->client->sendAiSpend($spend);
