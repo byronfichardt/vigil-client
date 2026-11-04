@@ -38,7 +38,8 @@ class VigilServiceProvider extends ServiceProvider
 
         $this->app->singleton(AiSpendRecorder::class, fn ($app) => new AiSpendRecorder(
             client: $app->make(VigilClient::class),
-            cache: $app->make('cache')->store(config('vigil.ai_spend.cache_store')),
+            caches: $app->make('cache'),
+            store: config('vigil.ai_spend.cache_store'),
             enabled: self::configured(),
         ));
 

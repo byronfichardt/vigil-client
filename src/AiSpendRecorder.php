@@ -2,8 +2,10 @@
 
 namespace Vigil\Client;
 
+use Illuminate\Contracts\Cache\Factory;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
+use InvalidArgumentException;
 use Throwable;
 
 /**
@@ -28,9 +30,15 @@ class AiSpendRecorder
     /** Costs are counted in millionths of a dollar so the cache can add them atomically. */
     private const MICROS = 1_000_000;
 
+    /** Unsent spend is kept this long in stores that need an expiry for an atomic add. */
+    private const KEEP_SECONDS = 60 * 60 * 24 * 365;
+
+    private ?Repository $cache = null;
+
     public function __construct(
         private readonly VigilClient $client,
-        private readonly Repository $cache,
+        private readonly Factory $caches,
+        private readonly ?string $store,
         private readonly bool $enabled,
     ) {}
 
@@ -44,8 +52,7 @@ class AiSpendRecorder
         }
 
         try {
-            $this->cache->add(self::key($provider), 0);
-            $this->cache->increment(self::key($provider), $micros);
+            $this->count(self::key($provider), $micros);
         } catch (Throwable) {
         }
     }
@@ -55,7 +62,7 @@ class AiSpendRecorder
      */
     public function send(): void
     {
-        $store = $this->cache->getStore();
+        $store = $this->cache()->getStore();
 
         if ($store instanceof LockProvider) {
             $store->lock('vigil:ai-spend:send', 120)->get(fn () => $this->sendPending());
@@ -64,6 +71,39 @@ class AiSpendRecorder
         }
 
         $this->sendPending();
+    }
+
+    /**
+     * Redis and the array store create a missing key on increment; the database and memcached stores
+     * return false, and then the store's own atomic add creates it, with one more increment if another process won.
+     */
+    private function count(string $key, int $micros): void
+    {
+        $cache = $this->cache();
+
+        if ($cache->increment($key, $micros) !== false) {
+            return;
+        }
+
+        if (! $cache->add($key, $micros, self::KEEP_SECONDS)) {
+            $cache->increment($key, $micros);
+        }
+    }
+
+    /**
+     * A misspelt VIGIL_AI_SPEND_CACHE_STORE falls back to the app's default store rather than breaking the app.
+     */
+    private function cache(): Repository
+    {
+        if ($this->cache === null) {
+            try {
+                $this->cache = $this->caches->store($this->store);
+            } catch (InvalidArgumentException) {
+                $this->cache = $this->caches->store();
+            }
+        }
+
+        return $this->cache;
     }
 
     private function sendPending(): void
@@ -78,7 +118,7 @@ class AiSpendRecorder
             }
 
             foreach ($chunk as $row) {
-                $this->cache->decrement(self::key($row['provider']), $row['micros']);
+                $this->cache()->decrement(self::key($row['provider']), $row['micros']);
             }
         }
     }
@@ -90,7 +130,7 @@ class AiSpendRecorder
     {
         return array_filter(array_combine(
             self::PROVIDERS,
-            array_map(fn (string $provider) => (int) $this->cache->get(self::key($provider), 0) / (float) self::MICROS, self::PROVIDERS),
+            array_map(fn (string $provider) => (int) $this->cache()->get(self::key($provider), 0) / (float) self::MICROS, self::PROVIDERS),
         ));
     }
 
@@ -102,7 +142,7 @@ class AiSpendRecorder
         $rows = [];
 
         foreach (self::PROVIDERS as $provider) {
-            for ($left = (int) $this->cache->get(self::key($provider), 0); $left > 0; $left -= self::MAX_ROW_USD * self::MICROS) {
+            for ($left = (int) $this->cache()->get(self::key($provider), 0); $left > 0; $left -= self::MAX_ROW_USD * self::MICROS) {
                 $rows[] = ['provider' => $provider, 'micros' => min($left, self::MAX_ROW_USD * self::MICROS)];
             }
         }

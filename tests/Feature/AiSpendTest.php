@@ -112,13 +112,58 @@ it('ignores spend when Vigil has no key', function () {
     expect(AiSpend::pending())->toBeEmpty();
 });
 
+function recorderOn(string $store): AiSpendRecorder
+{
+    return new AiSpendRecorder(app(VigilClient::class), app('cache'), $store, enabled: true);
+}
+
 it('never lets a broken cache affect the app', function () {
-    $cache = Mockery::mock(Illuminate\Contracts\Cache\Repository::class);
-    $cache->shouldReceive('add')->andThrow(new RuntimeException('redis down'));
-    $recorder = new AiSpendRecorder(app(VigilClient::class), $cache, enabled: true);
+    $caches = Mockery::mock(Illuminate\Contracts\Cache\Factory::class);
+    $caches->shouldReceive('store')->andThrow(new RuntimeException('redis down'));
+    $recorder = new AiSpendRecorder(app(VigilClient::class), $caches, null, enabled: true);
 
     $recorder->record('gemini', 1.0);
 })->throwsNoExceptions();
+
+it('falls back to the default cache when the configured store does not exist', function () {
+    $recorder = recorderOn('typo');
+
+    $recorder->record('gemini', 0.5);
+
+    expect($recorder->pending())->toBe(['gemini' => 0.5]);
+});
+
+it('counts on the database store, which does not create keys on increment', function () {
+    Illuminate\Support\Facades\Schema::create('cache', function ($table) {
+        $table->string('key')->primary();
+        $table->mediumText('value');
+        $table->integer('expiration');
+    });
+    Illuminate\Support\Facades\Schema::create('cache_locks', function ($table) {
+        $table->string('key')->primary();
+        $table->string('owner');
+        $table->integer('expiration');
+    });
+    $recorder = recorderOn('database');
+
+    $recorder->record('gemini', 0.5);
+    $recorder->record('gemini', 0.25);
+    $recorder->send();
+
+    expect($this->vigil->spendBatches)->toBe([[['provider' => 'gemini', 'cost_usd' => 0.75]]])
+        ->and($recorder->pending())->toBeEmpty();
+});
+
+it('adds again when another process created the key first', function () {
+    $cache = Mockery::mock(Illuminate\Contracts\Cache\Repository::class);
+    $cache->shouldReceive('increment')->once()->ordered()->andReturn(false);
+    $cache->shouldReceive('add')->once()->ordered()->andReturn(false);
+    $cache->shouldReceive('increment')->once()->ordered()->with('vigil:ai-spend:gemini', 500_000)->andReturn(800_000);
+    $caches = Mockery::mock(Illuminate\Contracts\Cache\Factory::class);
+    $caches->shouldReceive('store')->andReturn($cache);
+
+    (new AiSpendRecorder(app(VigilClient::class), $caches, null, enabled: true))->record('gemini', 0.5);
+});
 
 it('only asks for a resend when Vigil certainly did not record the spend', function (callable $response, bool $recorded) {
     $client = new VigilClient('https://vigil.test', 'key', handler: GuzzleHttp\HandlerStack::create(new GuzzleHttp\Handler\MockHandler([$response])));
