@@ -159,7 +159,70 @@ it('only asks for a resend when Vigil certainly did not record the spend', funct
     'accepted' => [fn () => new GuzzleHttp\Psr7\Response(202), true],
     'rate limited' => [fn () => new GuzzleHttp\Psr7\Response(429), false],
     'rejected' => [fn () => new GuzzleHttp\Psr7\Response(422), true],
-    'server error' => [fn () => new GuzzleHttp\Psr7\Response(500), true],
+    'Vigil not upgraded yet' => [fn () => new GuzzleHttp\Psr7\Response(404), false],
+    'server error' => [fn () => new GuzzleHttp\Psr7\Response(500), false],
     'unreachable' => [fn () => new GuzzleHttp\Exception\ConnectException('refused', new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test')), false],
     'timed out after sending' => [fn () => new GuzzleHttp\Exception\NetworkTimeoutException('timeout', new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test')), true],
+]);
+
+it('sends spend from an idle worker once half a minute has passed', function () {
+    AiSpend::record('gemini', 0.5);
+    event(new JobProcessed('database', Mockery::mock(Illuminate\Contracts\Queue\Job::class)));
+    AiSpend::record('gemini', 0.25);
+    event(new JobProcessed('database', Mockery::mock(Illuminate\Contracts\Queue\Job::class)));
+
+    $this->travel(AiSpendRecorder::JOB_FLUSH_SECONDS + 1)->seconds();
+    event(new Illuminate\Queue\Events\Looping('database', 'default'));
+
+    expect($this->vigil->spendBatches)->toBe([
+        [['provider' => 'gemini', 'cost_usd' => 0.5]],
+        [['provider' => 'gemini', 'cost_usd' => 0.25]],
+    ]);
+});
+
+it('sends everything when the worker stops', function () {
+    AiSpend::record('gemini', 0.5);
+    event(new JobProcessed('database', Mockery::mock(Illuminate\Contracts\Queue\Job::class)));
+    AiSpend::record('gemini', 0.25);
+
+    event(new Illuminate\Queue\Events\WorkerStopping(0));
+
+    expect($this->vigil->spendBatches)->toHaveCount(2);
+});
+
+it('stops at the first turned-away call and keeps the rest', function () {
+    $this->vigil->acceptSpend = false;
+
+    AiSpend::record('gemini', 25_000);
+
+    expect($this->vigil->spendBatches)->toBeEmpty()
+        ->and(AiSpend::pending())->toBe(['gemini' => 25_000.0]);
+});
+
+it('carries rows beyond a few calls over to the next flush', function () {
+    AiSpend::record('gemini', 70_000);
+
+    expect($this->vigil->spendBatches)->toHaveCount(AiSpendRecorder::MAX_CALLS_PER_FLUSH)
+        ->and(AiSpend::pending())->toBe(['gemini' => 10_000.0]);
+});
+
+it('tells Guzzle 7 connection failures apart by whether anything was sent', function (int $errno, bool $recorded) {
+    $request = new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test');
+    $failure = new class('failed', $request) extends GuzzleHttp\Exception\ConnectException
+    {
+        public array $context = [];
+
+        public function getHandlerContext(): array
+        {
+            return $this->context;
+        }
+    };
+    $failure->context = ['errno' => $errno];
+    $client = new VigilClient('https://vigil.test', 'key', handler: GuzzleHttp\HandlerStack::create(new GuzzleHttp\Handler\MockHandler([$failure])));
+
+    expect($client->sendAiSpend([['provider' => 'gemini', 'cost_usd' => 1.0]]))->toBe($recorded);
+})->with([
+    'host not found' => [6, false],
+    'connection refused' => [7, false],
+    'timed out after sending' => [28, true],
 ]);

@@ -167,7 +167,11 @@ use Vigil\Client\Facades\AiSpend;
 AiSpend::record('gemini', $costUsd);
 ```
 
-Accepted providers: `gemini`, `serper`, `serpapi`.
+Accepted providers: `gemini`, `serper`, `serpapi`; anything else is dropped so it can't make Vigil reject the rest.
+
+Needs a Vigil server with the `/api/ai-spend` endpoint. Until then sends get a 404 and the spend is kept for the next send, so deploy Vigil first.
+
+Queue workers send at most every 30 seconds, including while idle. Spend Vigil turns away (rate limit, not reachable, server error) is kept and sent next time; in a PHP-FPM request that only lasts until the request ends.
 
 
 ## Security

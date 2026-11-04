@@ -94,7 +94,8 @@ class VigilClient
 
     /**
      * @param  list<array{provider: string, cost_usd: float}>  $spend
-     * @return bool false only when Vigil certainly did not record it (rate limited or unreachable), so it can be sent again
+     * @return bool false only when Vigil certainly did not record it, so it can be sent again: rate limited, endpoint
+     *              missing (Vigil not upgraded yet), a server error (Vigil saves a report all-or-nothing) or unreachable
      */
     public function sendAiSpend(array $spend): bool
     {
@@ -114,7 +115,7 @@ class VigilClient
             }
 
             return ! match (true) {
-                $e instanceof BadResponseException => $e->getResponse()->getStatusCode() === 429,
+                $e instanceof BadResponseException => in_array($e->getResponse()->getStatusCode(), [404, 429], true) || $e->getResponse()->getStatusCode() >= 500,
                 $e instanceof ConnectException => $this->neverSent($e),
                 default => false,
             };

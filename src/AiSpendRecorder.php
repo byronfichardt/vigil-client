@@ -4,7 +4,8 @@ namespace Vigil\Client;
 
 /**
  * Adds up AI and API costs per provider and sends them to Vigil when a request or command ends,
- * and at most every half minute from a queue worker.
+ * and at most every half minute from a queue worker. Spend Vigil turned away is kept for the next send,
+ * which only helps long-running processes: a PHP-FPM request loses it when the request ends.
  */
 class AiSpendRecorder
 {
@@ -21,6 +22,9 @@ class AiSpendRecorder
 
     public const MAX_ROWS = 20;
 
+    /** Calls per flush; anything beyond waits for the next flush instead of blocking the request. */
+    public const MAX_CALLS_PER_FLUSH = 3;
+
     public const JOB_FLUSH_SECONDS = 30;
 
     /** @var array<string, float> */
@@ -28,7 +32,7 @@ class AiSpendRecorder
 
     private int $records = 0;
 
-    private ?float $flushedAt = null;
+    private ?int $flushedAtMs = null;
 
     public function __construct(
         private readonly VigilClient $client,
@@ -55,29 +59,39 @@ class AiSpendRecorder
      */
     public function flushIfDue(): void
     {
-        if ($this->flushedAt === null || microtime(true) - $this->flushedAt >= self::JOB_FLUSH_SECONDS) {
+        if ($this->flushedAtMs === null || now()->getTimestampMs() - $this->flushedAtMs >= self::JOB_FLUSH_SECONDS * 1000) {
             $this->flush();
         }
     }
 
     public function flush(): void
     {
-        $this->flushedAt = microtime(true);
+        $this->flushedAtMs = now()->getTimestampMs();
 
         if ($this->costs === []) {
             return;
         }
 
-        $costs = $this->costs;
+        $chunks = array_chunk($this->rows($this->costs), self::MAX_ROWS);
         $this->costs = [];
         $this->records = 0;
 
-        foreach (array_chunk($this->rows($costs), self::MAX_ROWS) as $rows) {
-            if (! $this->client->sendAiSpend($rows)) {
-                foreach ($rows as $row) {
-                    $this->costs[$row['provider']] = ($this->costs[$row['provider']] ?? 0) + $row['cost_usd'];
-                }
+        foreach ($chunks as $i => $rows) {
+            if ($i >= self::MAX_CALLS_PER_FLUSH || ! $this->client->sendAiSpend($rows)) {
+                $this->keep(array_merge(...array_slice($chunks, $i)));
+
+                return;
             }
+        }
+    }
+
+    /**
+     * @param  list<array{provider: string, cost_usd: float}>  $rows
+     */
+    private function keep(array $rows): void
+    {
+        foreach ($rows as $row) {
+            $this->costs[$row['provider']] = ($this->costs[$row['provider']] ?? 0) + $row['cost_usd'];
         }
     }
 

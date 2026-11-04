@@ -8,6 +8,7 @@ use Vigil\Client\AiSpendRecorder;
 /**
  * @method static void record(string $provider, float $costUsd)
  * @method static void flush()
+ * @method static void flushIfDue()
  * @method static array<string, float> pending()
  */
 class AiSpend extends Facade

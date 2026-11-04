@@ -9,6 +9,8 @@ use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobTimedOut;
+use Illuminate\Queue\Events\Looping;
+use Illuminate\Queue\Events\WorkerStopping;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 use Throwable;
@@ -111,7 +113,8 @@ class VigilServiceProvider extends ServiceProvider
                 register_shutdown_function(fn () => VigilLogFlusher::flush());
 
                 $events = $this->app->make('events');
-                $events->listen([JobProcessed::class, JobFailed::class, JobExceptionOccurred::class], fn () => VigilLogFlusher::flush(job: true));
+                $events->listen([JobProcessed::class, JobFailed::class, JobExceptionOccurred::class, Looping::class], fn () => VigilLogFlusher::flush(job: true));
+                $events->listen(WorkerStopping::class, fn () => VigilLogFlusher::flush());
 
                 if (class_exists(JobTimedOut::class)) {
                     $events->listen(JobTimedOut::class, fn () => VigilLogFlusher::flush());
