@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Cache;
 use Vigil\Client\AiSpendRecorder;
 use Vigil\Client\Facades\AiSpend;
 use Vigil\Client\VigilClient;
@@ -128,12 +129,13 @@ it('only asks for a resend when Vigil certainly did not record the spend', funct
     'rate limited' => [fn () => new GuzzleHttp\Psr7\Response(429), false],
     'rejected' => [fn () => new GuzzleHttp\Psr7\Response(422), true],
     'Vigil not upgraded yet' => [fn () => new GuzzleHttp\Psr7\Response(404), false],
+    'wrong key' => [fn () => new GuzzleHttp\Psr7\Response(401), false],
     'server error' => [fn () => new GuzzleHttp\Psr7\Response(500), false],
     'unreachable' => [fn () => new GuzzleHttp\Exception\ConnectException('refused', new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test')), false],
     'timed out after sending' => [fn () => new GuzzleHttp\Exception\NetworkTimeoutException('timeout', new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test')), true],
 ]);
 
-it('tells Guzzle 7 connection failures apart by whether anything was sent', function (int $errno, bool $recorded) {
+it('tells Guzzle 7 connection failures apart by whether anything was sent', function (int $errno, float $pretransfer, bool $recorded) {
     $request = new GuzzleHttp\Psr7\Request('POST', 'https://vigil.test');
     $failure = new class('failed', $request) extends GuzzleHttp\Exception\ConnectException
     {
@@ -144,12 +146,27 @@ it('tells Guzzle 7 connection failures apart by whether anything was sent', func
             return $this->context;
         }
     };
-    $failure->context = ['errno' => $errno];
+    $failure->context = ['errno' => $errno, 'pretransfer_time' => $pretransfer];
     $client = new VigilClient('https://vigil.test', 'key', handler: GuzzleHttp\HandlerStack::create(new GuzzleHttp\Handler\MockHandler([$failure])));
 
     expect($client->sendAiSpend([['provider' => 'gemini', 'cost_usd' => 1.0]]))->toBe($recorded);
 })->with([
-    'host not found' => [6, false],
-    'connection refused' => [7, false],
-    'timed out after sending' => [28, true],
+    'host not found' => [6, 0.0, false],
+    'connection refused' => [7, 0.0, false],
+    'TLS failed' => [35, 0.0, false],
+    'timed out while connecting' => [28, 0.0, false],
+    'timed out after sending' => [28, 0.12, true],
 ]);
+
+it('runs one send at a time', function () {
+    AiSpend::record('gemini', 0.5);
+    $lock = Cache::lock('vigil:ai-spend:send', 120);
+    $lock->get();
+
+    AiSpend::send();
+    expect($this->vigil->spendBatches)->toBeEmpty();
+
+    $lock->release();
+    AiSpend::send();
+    expect($this->vigil->spendBatches)->toHaveCount(1);
+});

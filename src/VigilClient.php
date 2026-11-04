@@ -89,13 +89,15 @@ class VigilClient
         }
     }
 
-    /** cURL could not resolve or reach Vigil, so nothing was sent. */
-    private const NOT_SENT_ERRNOS = [6, 7];
+    /** cURL could not resolve, reach or open TLS to Vigil, so nothing was sent. */
+    private const NOT_SENT_ERRNOS = [6, 7, 35];
+
+    /** Vigil did not take the report: a wrong key, rate limited, no endpoint yet, or a server error (saved all-or-nothing). */
+    private const RESEND_STATUSES = [401, 403, 404, 429];
 
     /**
      * @param  list<array{provider: string, cost_usd: float}>  $spend
-     * @return bool false only when Vigil certainly did not record it, so it can be sent again: rate limited, endpoint
-     *              missing (Vigil not upgraded yet), a server error (Vigil saves a report all-or-nothing) or unreachable
+     * @return bool false only when Vigil certainly did not record it, so it can be sent again
      */
     public function sendAiSpend(array $spend): bool
     {
@@ -115,7 +117,7 @@ class VigilClient
             }
 
             return ! match (true) {
-                $e instanceof BadResponseException => in_array($e->getResponse()->getStatusCode(), [404, 429], true) || $e->getResponse()->getStatusCode() >= 500,
+                $e instanceof BadResponseException => in_array($e->getResponse()->getStatusCode(), self::RESEND_STATUSES, true) || $e->getResponse()->getStatusCode() >= 500,
                 $e instanceof ConnectException => $this->neverSent($e),
                 default => false,
             };
@@ -123,11 +125,18 @@ class VigilClient
     }
 
     /**
-     * Guzzle 8 throws ConnectException only when no connection was made; Guzzle 7 also throws it for timeouts after sending.
+     * Guzzle 8 throws ConnectException only when no connection was made. Guzzle 7 also throws it for timeouts,
+     * so there it counts as unsent only if cURL failed to connect or never started sending the request.
      */
     private function neverSent(ConnectException $e): bool
     {
-        return ! method_exists($e, 'getHandlerContext') || in_array($e->getHandlerContext()['errno'] ?? null, self::NOT_SENT_ERRNOS, true);
+        if (! method_exists($e, 'getHandlerContext')) {
+            return true;
+        }
+
+        $context = $e->getHandlerContext();
+
+        return in_array($context['errno'] ?? null, self::NOT_SENT_ERRNOS, true) || (float) ($context['pretransfer_time'] ?? 1) === 0.0;
     }
 
     private function headers(): array

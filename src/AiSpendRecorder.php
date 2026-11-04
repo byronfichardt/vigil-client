@@ -2,13 +2,15 @@
 
 namespace Vigil\Client;
 
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
 use Throwable;
 
 /**
  * Adds up AI and API costs per provider in the app's cache, and sends the totals to Vigil once a minute
  * from the scheduler. A counter only goes down by what Vigil accepted, so nothing is lost between sends,
- * when a process is killed, or while Vigil is unreachable.
+ * when a process is killed, or while Vigil is unreachable. Counting is atomic on the redis, database and
+ * memcached stores; the file store can lose a cost when two processes record at the same moment.
  */
 class AiSpendRecorder
 {
@@ -48,7 +50,23 @@ class AiSpendRecorder
         }
     }
 
+    /**
+     * Only one send runs at a time, even across servers, so the same spend is never reported twice.
+     */
     public function send(): void
+    {
+        $store = $this->cache->getStore();
+
+        if ($store instanceof LockProvider) {
+            $store->lock('vigil:ai-spend:send', 120)->get(fn () => $this->sendPending());
+
+            return;
+        }
+
+        $this->sendPending();
+    }
+
+    private function sendPending(): void
     {
         $rows = $this->rows();
 
