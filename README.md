@@ -169,6 +169,8 @@ AiSpend::record('gemini', $costUsd);
 
 Costs are added up per provider in the app's cache and sent to Vigil once a minute by the scheduler, so the app must run `schedule:run` (as it already does for the heartbeat). Use a cache store every web and queue process shares, ideally redis or database, where counting is atomic (`VIGIL_AI_SPEND_CACHE_STORE`, default the app's cache; an unknown name falls back to the default). The `file` store can drop a cost when two processes record at once, and the `array` store loses everything between processes.
 
+Because unsent spend lives in the cache, `php artisan cache:clear` drops up to a minute of it, and on the `database` store a cost recorded inside a database transaction is rolled back with it. Redis avoids the second.
+
 Accepted providers: `gemini`, `serper`, `serpapi`; anything else is dropped so it can't make Vigil reject the rest. Spend Vigil turns away (rate limited, unreachable, a server error, or a Vigil without the `/api/ai-spend` endpoint yet) stays in the cache and goes out with the next send.
 
 ## Security
